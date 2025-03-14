@@ -3,134 +3,160 @@ import math
 import numpy as np
 import random
 
-#class PathORAM:
-inFile = sys.argv[1]    # input file 'in.txt'
-outFile = sys.argv[2]   # output file 'out.txt'
+class PathORAM:
+    def __init__(self, in_file, out_file):
+        self.in_file = in_file
+        self.out_file = out_file
+        self.read_op = []
+        self.read_block = []
+        self.r_buffer = []
+        self.w_buffer = []
+        self.position_map = {}
+        self.stash = []
+        self.stash_data = {}
+        self.data = {}
+        self.tree = []
+        self.N = 0
+        self.length = 0
+        self.numLeafs = 0
+        self.treeSize = 0
+        self._initialize()
 
-read_op = list()        # read or write
-read_block = list()     # number
+    def _initialize(self):
+        """Reads input file and initializes the ORAM tree and position map."""
+        with open(self.in_file, 'r') as f:
+            first_line = f.readline().strip()
+            if not first_line:
+                raise ValueError("Input file is empty or missing the first line.")
+            self.N = int(first_line)  # Number of blocks
+            
+            # Read operations
+            for line in f.readlines():
+                op, block = line.strip().split()
+                self.read_op.append(op)
+                self.read_block.append(int(block))
 
-r_buffer = list() # buffer stores output data
-w_buffer = list()
+        self.length = int(math.ceil(math.log(self.N, 2)) - 1)  # Tree path length
+        self.numLeafs = int(math.pow(2, self.length) - 1)
+        self.treeSize = int(math.pow(2, self.length + 1) - 1)
+        self.tree = [0] * self.treeSize
 
-# read input file and store data on the lists
-with open(inFile,'r') as f:
-    N = int(f.readline().strip()) # total number of blocks
-    for line in f.readlines():
-        read_op.append(line.strip().split()[0])
-        read_block.append(line.strip().split()[1])
+        for i in range(1, self.N + 1):
+            self.tree[i] = i
+        random.shuffle(self.tree)
 
-length = int(math.ceil(math.log(N, 2)) - 1) # length of tree path
-numLeafs = int(math.pow(2, length) - 1)
-treeSize = int(math.pow(2, length + 1) - 1)
-tree = [0] * treeSize
-for i in range(1, N + 1):
-    tree[i] = i
-random.shuffle(tree)
+        # Initialize position map
+        self.position_map = {x: random.randint(0, self.numLeafs - 1) for x in range(1, self.N + 1)}
 
-def read_leaf(branch):
-    return int(int(math.pow(2, length)) + int(branch) - 1);
+        # Assign random paths to the tree blocks
+        for i in range(self.treeSize):
+            block = self.tree[i]
+            if block != 0:
+                self.position_map[block] = self.random_path(i)
 
-def get_parent(node):
-    return int(math.floor((node - 1) / 2.0))
+        # Initialize stash and data
+        for i in self.tree:
+            self.data[i] = random.randint(1000, 10000)
 
-def get_path(branch):
-    path = list()
-    for i in range(0, length + 1):
-        path.append(branch)
-        branch = get_parent(branch)
-    return list(reversed(path))
+    def read_leaf(self, branch):
+        return int(math.pow(2, self.length) + branch - 1)
 
-# Random path from leaf to root
-def random_path(node):
-    rand = random.randint(0, 1)
-    child1 = 2 * node + 1
-    child2 = 2 * node + 2
-    if (child2 > (treeSize - 1)):
-        return int (node - numLeafs)
+    def get_parent(self, node):
+        return int((node - 1) / 2)
 
-    else:
-        if(rand == 0):
-            return random_path(child1)
-        else:
-            return random_path(child2)
+    def get_path(self, branch):
+        """Gets the path from a leaf to the root."""
+        path = []
+        for _ in range(self.length + 1):
+            path.append(branch)
+            branch = self.get_parent(branch)
+        return list(reversed(path))
 
-def read_bucket(block):
-    r_buffer.append(['R', block])
-    return data[block]
+    def random_path(self, node):
+        """Generates a random path in the ORAM tree."""
+        rand = random.randint(0, 1)
+        child1 = 2 * node + 1
+        child2 = 2 * node + 2
+        if child2 > (self.treeSize - 1):
+            return int(node - self.numLeafs)
+        return self.random_path(child1) if rand == 0 else self.random_path(child2)
 
-def write_bucket(block, new_data):
-    w_buffer.append(['W', block])
-    data[block] = new_data
+    def read_bucket(self, block):
+        """Reads a bucket and appends it to the read buffer."""
+        self.r_buffer.append(['R', block])
+        return self.data[block]
 
-# Initialize the position map
-position_map = dict((x, random.randint(0, numLeafs - 1))
-            for x in range(1, N + 1))
+    def write_bucket(self, block, new_data):
+        """Writes to a bucket and logs it in the write buffer."""
+        self.w_buffer.append(['W', block])
+        self.data[block] = new_data
 
-# Initialize the tree
-for i in range(treeSize):
-    block = tree[i]
-    if(block != 0):
-        position_map[block] = random_path(i)
+    def access(self, op, block, new_data):
+        """Perform a read or write operation on a block."""
+        x = self.position_map.get(block)
+        self.position_map[block] = np.random.randint(0, self.numLeafs - 1)
 
-# Initialize the stash
-stash = list()
-stash_data = dict()
-data = dict()
-for i in tree:              # block 0 has dummy data
-    data[i] = random.randint(1000, 10000)
+        leafNode = self.read_leaf(x)
+        path = self.get_path(leafNode)
 
-def access(op, block, new_data):
-    """Perform a read or write operation on block 'a'."""
-    x = position_map.get(block) # position of block 'a' in the tree
-    position_map[block] = np.random.randint(0, numLeafs - 1)
+        # Read path into stash
+        for node in path:
+            blocks = self.tree[node]
+            self.stash.append(blocks)
+            self.stash_data[blocks] = self.read_bucket(blocks)
 
-    leafNode = read_leaf(x)
-    path = get_path(leafNode) # path from leaf to root
-    for node in path:
-        blocks = tree[node]
-        stash.append(blocks)
-        stash_data[blocks] = read_bucket(blocks)
+        # Perform operation
+        if op == 'W':
+            self.stash_data[block] = new_data
 
-    # Perform the operation on the block
-    if(op == 'W'):
-        stash_data[block] = new_data
+        # Write back the stash
+        for node in reversed(path):
+            n = self.tree[node]
+            self.write_bucket(n, self.stash_data.get(n, None))
+            for i in self.stash[:]:
+                if i == 0:
+                    self.stash.remove(i)
+                    self.stash_data.pop(i, None)
+                else:
+                    current_branch = self.position_map.get(i)
+                    a = self.get_path(current_branch)
+                    if node in a:
+                        self.tree[node] = i
+                        self.stash.remove(i)
+                        self.stash_data.pop(i, None)
 
-    # Write the stash back to the tree
-    for node in reversed(path):
-        n = tree[node]
-        write_bucket(n, stash_data.get(n))
-        for i in stash:
-            if (i == 0):
-                stash.remove(i)
-                stash_data.pop(i, None)
+    def write_file(self):
+        """Writes the read/write operations to the output file."""
+        buffer = self.r_buffer + list(reversed(self.w_buffer))
+        print("Writing to file:", buffer)  # Debug print
+        with open(self.out_file, "a") as o:
+            for i in buffer:
+                o.write(f"{i[0]} {i[1]}\n")
+        self.r_buffer.clear()
+        self.w_buffer.clear()
+
+    def run(self):
+        """Runs the ORAM simulation based on input operations."""
+        unit_test = {}
+        with open(self.out_file, "w") as _:  # Clear file before writing
+            pass
+
+        for i in range(len(self.read_op)):
+            if self.read_op[i] == 'R':
+                self.access(self.read_op[i], int(self.read_block[i]), None)
             else:
-                current_branch = position_map.get(i)
-                a = get_path(current_branch)
-                if(node in a):
-                    tree[node] = i
-                    stash.remove(i)
-                    stash_data.pop(i, None)
+                self.access(self.read_op[i], int(self.read_block[i]), random.randint(1000, 5000))
+            
+            self.write_file()
+            unit_test[self.read_block[i]] = self.r_buffer
+            self.r_buffer = []
+            self.w_buffer = []
+        
+        print(unit_test)  # Debug output
 
-def write_file(o):
-    buffer = r_buffer + list(reversed(w_buffer))
-    for i in buffer:
-        o.write(str(i[0]) + ' ' + str(i[1]) + '\n')
-
-o = open(outFile, "w")
-unit_test = {}
-for i in range (len(read_op)):
-    if(read_op[i] == 'R'):
-        access(read_op[i], int(read_block[i]), None)
-        write_file(o)
-
-    else:
-        access(read_op[i], int(read_block[i]), random.randint(1000, 5000))
-        write_file(o)
-    unit_test[read_block[i]] = r_buffer
-    buffer = []
-    r_buffer = []
-    w_buffer = []
-o.close()
-
-print(unit_test)
+if __name__ == "__main__":
+    in_file = sys.argv[1] if len(sys.argv) > 1 else "in.txt"
+    out_file = sys.argv[2] if len(sys.argv) > 2 else "out.txt"
+    path_oram = PathORAM(in_file, out_file)
+    path_oram.run()
+    
