@@ -13,15 +13,16 @@ def init_db():
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS records (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        encrypted_field BLOB
+        encrypted_field BLOB,
+        oram_id INTEGER
     )
     """)
     conn.commit()
     return conn
 
 # Initialize Path ORAM
-def init_path_oram(N, Z):
-    return PathORAM(N=N, Z=Z)
+def init_path_oram(N, Z, num_orams):
+    return PathORAM(N=N, Z=Z, num_orams=num_orams)
 
 # Deterministic encryption for queryable fields
 def deterministic_encrypt(data, key):
@@ -30,7 +31,7 @@ def deterministic_encrypt(data, key):
     cipher = AES.new(h.digest()[:16], AES.MODE_ECB)
     return cipher.encrypt(pad(data.encode('utf-8'), AES.block_size))
 
-def insert_record(conn, path_oram, encryption, data, field):
+def insert_record(conn, path_oram, encryption, data, field, alpha):
     """Insert a record into the database and Path ORAM."""
     encrypted_data = encryption.encrypt_data(data)  # Encrypt data
     encrypted_field = deterministic_encrypt(field, encryption.key)
@@ -40,54 +41,58 @@ def insert_record(conn, path_oram, encryption, data, field):
     cursor.execute('SELECT COUNT(*) FROM records')
     record_id = cursor.fetchone()[0] + 1  # Simulate auto-increment
 
-    # Check if record_id exceeds the maximum number of blocks (N)
-    if record_id > path_oram.N:
-        raise ValueError(f"Record ID {record_id} exceeds the maximum number of blocks ({path_oram.N}).")
+    # Compute ORAM ID
+    oram_id = record_id % (2 ** alpha)  # Distribute records across ORAMs
 
     # Insert the record into Path ORAM
-    path_oram.access(op='write', a=record_id, data=encrypted_data)
+    path_oram.access(oram_id, op='write', a=record_id, data=encrypted_data)
 
     # Insert metadata into SQLite database
-    cursor.execute('INSERT INTO records (id, encrypted_field) VALUES (?, ?)',
-                  (record_id, encrypted_field))
+    cursor.execute('INSERT INTO records (id, encrypted_field, oram_id) VALUES (?, ?, ?)',
+                  (record_id, encrypted_field, oram_id))
     conn.commit()
-    print(f"Record inserted with field: {field} and ID: {record_id}")
+    print(f"Record inserted with field: {field} and ID: {record_id} (ORAM {oram_id})")
 
 def retrieve_record(conn, path_oram, encryption, record_id):
     """Retrieve and decrypt a record by ID."""
     cursor = conn.cursor()
-    cursor.execute('SELECT encrypted_field FROM records WHERE id = ?', (record_id,))
+    cursor.execute('SELECT oram_id FROM records WHERE id = ?', (record_id,))
     result = cursor.fetchone()
     if result:
-        encrypted_data = path_oram.access(op='read', a=record_id)
+        oram_id = result[0]
+        encrypted_data = path_oram.access(oram_id, op='read', a=record_id)
         return encryption.decrypt_data(encrypted_data)
     return None
 
-def query_by_field(conn, path_oram, encryption, field, x):
+def query_by_field(conn, path_oram, encryption, field, alpha, x):
     """Query records by field and return padded results."""
     encrypted_field = deterministic_encrypt(field, encryption.key)
     cursor = conn.cursor()
 
     # Retrieve all records with the matching field
-    cursor.execute('SELECT id FROM records WHERE encrypted_field = ?', (encrypted_field,))
+    cursor.execute('SELECT id, oram_id FROM records WHERE encrypted_field = ?', (encrypted_field,))
     results = cursor.fetchall()
 
-    # Retrieve and decrypt the records
-    records = []
-    for record_id, in results:
-        encrypted_data = path_oram.access(op='read', a=record_id)
-        records.append(encryption.decrypt_data(encrypted_data))
+    # Group records by ORAM ID
+    oram_results = {}
+    for record_id, oram_id in results:
+        if oram_id not in oram_results:
+            oram_results[oram_id] = []
+        encrypted_data = path_oram.access(oram_id, op='read', a=record_id)
+        oram_results[oram_id].append(encryption.decrypt_data(encrypted_data))
 
-    # Pad the results
-    padded_records = pad_results(records, x)
-    print(f"Query results for '{field}': {padded_records}")
+    # Simulate accessing the appropriate ORAM and pad results
+    print(f"Query results for '{field}':")
+    for oram_id, records in oram_results.items():
+        padded_records = pad_results(records, x)
+        print(f"ORAM {oram_id}: {padded_records}")
 
 def pad_results(results, x):
     """Pad the results to the next power-of-x."""
     target_length = x ** (len(results).bit_length())
     return results + ['dummy'] * (target_length - len(results))
 
-def interactive_cli(conn, path_oram, encryption, x):
+def interactive_cli(conn, path_oram, encryption, alpha, x):
     """Interactive command-line interface for the SEAL program."""
     while True:
         print("\nOptions:")
@@ -100,7 +105,7 @@ def interactive_cli(conn, path_oram, encryption, x):
         if choice == "1":
             data = input("Enter the data to encrypt: ")
             field = input("Enter the field for querying: ")
-            insert_record(conn, path_oram, encryption, data, field)
+            insert_record(conn, path_oram, encryption, data, field, alpha)
         elif choice == "2":
             record_id = input("Enter the record ID: ")
             try:
@@ -114,7 +119,7 @@ def interactive_cli(conn, path_oram, encryption, x):
                 print("Invalid record ID. Please enter a number.")
         elif choice == "3":
             field = input("Enter the field to query: ")
-            query_by_field(conn, path_oram, encryption, field, x)
+            query_by_field(conn, path_oram, encryption, field, alpha, x)
         elif choice == "4":
             print("Exiting...")
             break
@@ -124,11 +129,13 @@ def interactive_cli(conn, path_oram, encryption, x):
 def test_seal_program():
     # Initialize the database, Path ORAM, and encryption
     conn = init_db()
-    N = 10  # Maximum number of blocks
+    N = 10  # Maximum number of blocks per ORAM
     Z = 4   # Bucket capacity
-    path_oram = init_path_oram(N=N, Z=Z)
+    alpha = 2  # Number of bits of leakage (2^alpha ORAMs)
+    num_orams = 2 ** alpha  # Number of ORAMs
+    path_oram = init_path_oram(N=N, Z=Z, num_orams=num_orams)
     encryption = EncryptionUtils()
-    x = 2
+    x = 2  # Padding factor
 
     # Test data
     test_data = [
@@ -140,7 +147,7 @@ def test_seal_program():
     # Insert records
     print("Inserting records...")
     for data, field in test_data:
-        insert_record(conn, path_oram, encryption, data, field)
+        insert_record(conn, path_oram, encryption, data, field, alpha)
 
     # Retrieve records by ID
     print("\nRetrieving records by ID...")
@@ -150,7 +157,7 @@ def test_seal_program():
 
     # Query records by field
     print("\nQuerying records by field...")
-    query_by_field(conn, path_oram, encryption, "field1", x)
+    query_by_field(conn, path_oram, encryption, "field1", alpha, x)
 
     # Close the database connection
     conn.close()
