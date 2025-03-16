@@ -6,176 +6,248 @@ from Crypto.Random import get_random_bytes
 from PathORAM import PathORAM
 from EncryptionUtils import EncryptionUtils
 
-# Initialize SQLite database
-def init_db():
-    conn = sqlite3.connect('encrypted_db.sqlite')
-    cursor = conn.cursor()
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS records (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        encrypted_field BLOB,
-        oram_id INTEGER
-    )
-    """)
-    conn.commit()
-    return conn
+class SEAL:
+    def __init__(self, N=10, Z=4, alpha=2, x=2):
+        """
+        Initialize the SEAL framework.
+        :param N: Maximum number of blocks per ORAM.
+        :param Z: Bucket capacity (number of blocks per bucket).
+        :param alpha: Number of bits of leakage (2^alpha ORAMs).
+        :param x: Padding factor (results are padded to the next power of x).
+        """
+        self.N = N
+        self.Z = Z
+        self.alpha = alpha
+        self.x = x
+        self.num_orams = 2 ** alpha
+        self.conn = self.init_db()
+        self.path_oram = PathORAM(N=N, Z=Z, num_orams=self.num_orams)
+        self.encryption = EncryptionUtils()
 
-# Initialize Path ORAM
-def init_path_oram(N, Z, num_orams):
-    return PathORAM(N=N, Z=Z, num_orams=num_orams)
+    def init_db(self):
+        """Initialize the SQLite database."""
+        conn = sqlite3.connect('encrypted_db.sqlite')
+        cursor = conn.cursor()
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS records (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            cb_no BLOB,
+            case_number BLOB,
+            arrest_date BLOB,
+            race BLOB,
+            charge_1_statute BLOB,
+            charge_1_description BLOB,
+            charge_1_type BLOB,
+            charge_1_class BLOB,
+            charge_2_statute BLOB,
+            charge_2_description BLOB,
+            charge_2_type BLOB,
+            charge_2_class BLOB,
+            charge_3_statute BLOB,
+            charge_3_description BLOB,
+            charge_3_type BLOB,
+            charge_3_class BLOB,
+            charge_4_statute BLOB,
+            charge_4_description BLOB,
+            charge_4_type BLOB,
+            charge_4_class BLOB,
+            charges_statute BLOB,
+            charges_description BLOB,
+            charges_type BLOB,
+            charges_class BLOB,
+            oram_id INTEGER
+        )
+        """)
+        conn.commit()
+        return conn
 
-# Deterministic encryption for queryable fields
-def deterministic_encrypt(data, key):
-    """Encrypt data deterministically for queryable fields."""
-    h = SHA256.new(data.encode('utf-8'))
-    cipher = AES.new(h.digest()[:16], AES.MODE_ECB)
-    return cipher.encrypt(pad(data.encode('utf-8'), AES.block_size))
+    def deterministic_encrypt(self, data):
+        """Encrypt data deterministically for queryable fields."""
+        h = SHA256.new(data.encode('utf-8'))
+        cipher = AES.new(h.digest()[:16], AES.MODE_ECB)
+        return cipher.encrypt(pad(data.encode('utf-8'), AES.block_size))
 
-def compute_oram_id(record_id, num_orams):
-    """Compute the ORAM ID for a given record ID using a PRP."""
-    h = SHA256.new(str(record_id).encode('utf-8'))
-    oram_id = int.from_bytes(h.digest(), byteorder='big') % num_orams
-    return oram_id
+    def compute_oram_id(self, record_id):
+        """Compute the ORAM ID for a given record ID using a PRP."""
+        h = SHA256.new(str(record_id).encode('utf-8'))
+        return int.from_bytes(h.digest(), byteorder='big') % self.num_orams
 
-def insert_record(conn, path_oram, encryption, data, field, alpha):
-    """Insert a record into the database and Path ORAM."""
-    encrypted_data = encryption.encrypt_data(data)  # Encrypt data
-    encrypted_field = deterministic_encrypt(field, encryption.key)
-    cursor = conn.cursor()
+    def insert_record(self, record):
+        """Insert a record into the database and Path ORAM."""
+        # Encrypt each field
+        encrypted_fields = {}
+        for field, value in record.items():
+            encrypted_fields[field] = self.deterministic_encrypt(value)
 
-    # Get the next record ID
-    cursor.execute('SELECT COUNT(*) FROM records')
-    record_id = cursor.fetchone()[0] + 1  # Simulate auto-increment
+        # Encrypt the data (combine all fields into a single string)
+        data = ",".join(record.values())
+        encrypted_data = self.encryption.encrypt_data(data)
 
-    # Compute ORAM ID using a PRP
-    num_orams = 2 ** alpha
-    oram_id = compute_oram_id(record_id, num_orams)
+        cursor = self.conn.cursor()
 
-    # Insert the record into Path ORAM
-    path_oram.access(oram_id, op='write', a=record_id, data=encrypted_data)
+        # Get the next record ID
+        cursor.execute('SELECT COUNT(*) FROM records')
+        record_id = cursor.fetchone()[0] + 1  # Simulate auto-increment
 
-    # Insert metadata into SQLite database
-    cursor.execute('INSERT INTO records (id, encrypted_field, oram_id) VALUES (?, ?, ?)',
-                  (record_id, encrypted_field, oram_id))
-    conn.commit()
-    print(f"Record inserted with field: {field} and ID: {record_id} (ORAM {oram_id})")
+        # Compute ORAM ID using a PRP
+        oram_id = self.compute_oram_id(record_id)
 
-def retrieve_record(conn, path_oram, encryption, record_id):
-    """Retrieve and decrypt a record by ID."""
-    cursor = conn.cursor()
-    cursor.execute('SELECT oram_id FROM records WHERE id = ?', (record_id,))
-    result = cursor.fetchone()
-    if result:
-        oram_id = result[0]
-        encrypted_data = path_oram.access(oram_id, op='read', a=record_id)
-        return encryption.decrypt_data(encrypted_data)
-    return None
+        # Insert the record into Path ORAM
+        self.path_oram.access(oram_id, op='write', a=record_id, data=encrypted_data)
 
-def query_by_field(conn, path_oram, encryption, field, alpha, x):
-    """Query records by field and return padded results."""
-    encrypted_field = deterministic_encrypt(field, encryption.key)
-    cursor = conn.cursor()
+        # Insert metadata into SQLite database
+        cursor.execute('''
+            INSERT INTO records (
+                id, cb_no, case_number, arrest_date, race,
+                charge_1_statute, charge_1_description, charge_1_type, charge_1_class,
+                charge_2_statute, charge_2_description, charge_2_type, charge_2_class,
+                charge_3_statute, charge_3_description, charge_3_type, charge_3_class,
+                charge_4_statute, charge_4_description, charge_4_type, charge_4_class,
+                charges_statute, charges_description, charges_type, charges_class,
+                oram_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            record_id,
+            encrypted_fields.get("CB_NO", ""),
+            encrypted_fields.get("CASE NUMBER", ""),
+            encrypted_fields.get("ARREST DATE", ""),
+            encrypted_fields.get("RACE", ""),
+            encrypted_fields.get("CHARGE 1 STATUTE", ""),
+            encrypted_fields.get("CHARGE 1 DESCRIPTION", ""),
+            encrypted_fields.get("CHARGE 1 TYPE", ""),
+            encrypted_fields.get("CHARGE 1 CLASS", ""),
+            encrypted_fields.get("CHARGE 2 STATUTE", ""),
+            encrypted_fields.get("CHARGE 2 DESCRIPTION", ""),
+            encrypted_fields.get("CHARGE 2 TYPE", ""),
+            encrypted_fields.get("CHARGE 2 CLASS", ""),
+            encrypted_fields.get("CHARGE 3 STATUTE", ""),
+            encrypted_fields.get("CHARGE 3 DESCRIPTION", ""),
+            encrypted_fields.get("CHARGE 3 TYPE", ""),
+            encrypted_fields.get("CHARGE 3 CLASS", ""),
+            encrypted_fields.get("CHARGE 4 STATUTE", ""),
+            encrypted_fields.get("CHARGE 4 DESCRIPTION", ""),
+            encrypted_fields.get("CHARGE 4 TYPE", ""),
+            encrypted_fields.get("CHARGE 4 CLASS", ""),
+            encrypted_fields.get("CHARGES STATUTE", ""),
+            encrypted_fields.get("CHARGES DESCRIPTION", ""),
+            encrypted_fields.get("CHARGES TYPE", ""),
+            encrypted_fields.get("CHARGES CLASS", ""),
+            oram_id  # Add oram_id here
+        ))
+        self.conn.commit()
+        print(f"Record inserted with ID: {record_id} (ORAM {oram_id})")
 
-    # Retrieve all records with the matching field
-    cursor.execute('SELECT id, oram_id FROM records WHERE encrypted_field = ?', (encrypted_field,))
-    results = cursor.fetchall()
+    def retrieve_record(self, record_id):
+        """Retrieve and decrypt a record by ID."""
+        cursor = self.conn.cursor()
+        cursor.execute('SELECT oram_id FROM records WHERE id = ?', (record_id,))
+        result = cursor.fetchone()
+        if result:
+            oram_id = result[0]
+            encrypted_data = self.path_oram.access(oram_id, op='read', a=record_id)
+            decrypted_data = self.encryption.decrypt_data(encrypted_data)
+            # Split the decrypted data into individual fields
+            fields = decrypted_data.split(',')
+            return {
+                "CB_NO": fields[0],
+                "CASE NUMBER": fields[1],
+                "ARREST DATE": fields[2],
+                "RACE": fields[3],
+                "CHARGE 1 STATUTE": fields[4],
+                "CHARGE 1 DESCRIPTION": fields[5],
+                "CHARGE 1 TYPE": fields[6],
+                "CHARGE 1 CLASS": fields[7],
+                "CHARGE 2 STATUTE": fields[8],
+                "CHARGE 2 DESCRIPTION": fields[9],
+                "CHARGE 2 TYPE": fields[10],
+                "CHARGE 2 CLASS": fields[11],
+                "CHARGE 3 STATUTE": fields[12],
+                "CHARGE 3 DESCRIPTION": fields[13],
+                "CHARGE 3 TYPE": fields[14],
+                "CHARGE 3 CLASS": fields[15],
+                "CHARGE 4 STATUTE": fields[16],
+                "CHARGE 4 DESCRIPTION": fields[17],
+                "CHARGE 4 TYPE": fields[18],
+                "CHARGE 4 CLASS": fields[19],
+                "CHARGES STATUTE": fields[20],
+                "CHARGES DESCRIPTION": fields[21],
+                "CHARGES TYPE": fields[22],
+                "CHARGES CLASS": fields[23],
+            }
+        return None
 
-    # Collect all matching records
-    all_records = []
-    for record_id, oram_id in results:
-        encrypted_data = path_oram.access(oram_id, op='read', a=record_id)
-        all_records.append(encryption.decrypt_data(encrypted_data))
+    def query_by_field(self, field_name, field_value):
+        """Query records by a specific field and return padded results."""
+        # Encrypt the field value
+        encrypted_field_value = self.deterministic_encrypt(field_value)
 
-    # Pad the total number of results
-    padded_records = pad_results(all_records, x)
-    print(f"Query results for '{field}': {padded_records}")
+        # Map the field name to the corresponding database column
+        field_to_column = {
+            "RACE": "race",
+            "CB_NO": "cb_no",
+            "CASE NUMBER": "case_number",
+            "ARREST DATE": "arrest_date",
+            "CHARGE 1 STATUTE": "charge_1_statute",
+            "CHARGE 1 DESCRIPTION": "charge_1_description",
+            "CHARGE 1 TYPE": "charge_1_type",
+            "CHARGE 1 CLASS": "charge_1_class",
+            "CHARGE 2 STATUTE": "charge_2_statute",
+            "CHARGE 2 DESCRIPTION": "charge_2_description",
+            "CHARGE 2 TYPE": "charge_2_type",
+            "CHARGE 2 CLASS": "charge_2_class",
+            "CHARGE 3 STATUTE": "charge_3_statute",
+            "CHARGE 3 DESCRIPTION": "charge_3_description",
+            "CHARGE 3 TYPE": "charge_3_type",
+            "CHARGE 3 CLASS": "charge_3_class",
+            "CHARGE 4 STATUTE": "charge_4_statute",
+            "CHARGE 4 DESCRIPTION": "charge_4_description",
+            "CHARGE 4 TYPE": "charge_4_type",
+            "CHARGE 4 CLASS": "charge_4_class",
+            "CHARGES STATUTE": "charges_statute",
+            "CHARGES DESCRIPTION": "charges_description",
+            "CHARGES TYPE": "charges_type",
+            "CHARGES CLASS": "charges_class",
+        }
 
-def pad_results(results, x):
-    """Pad the results to the next power-of-x."""
-    current_length = len(results)
-    if current_length == 0:
-        return ['dummy'] * x  # Handle empty results
+        # Get the corresponding column name
+        column_name = field_to_column.get(field_name.upper())
+        if not column_name:
+            raise ValueError(f"Field '{field_name}' does not exist in the database schema.")
 
-    # Find the next power of x
-    target_length = 1
-    while target_length < current_length:
-        target_length *= x
+        cursor = self.conn.cursor()
 
-    # Pad only if the current length is not already a power of x
-    if target_length > current_length:
-        return results + ['dummy'] * (target_length - current_length)
-    else:
-        return results  # No padding needed
+        # Retrieve all records with the matching field
+        cursor.execute(f'SELECT id, oram_id FROM records WHERE {column_name} = ?', (encrypted_field_value,))
+        results = cursor.fetchall()
 
-def interactive_cli(conn, path_oram, encryption, alpha, x):
-    """Interactive command-line interface for the SEAL program."""
-    while True:
-        print("\nOptions:")
-        print("1. Insert a record")
-        print("2. Retrieve a record by ID")
-        print("3. Query records by field")
-        print("4. Exit")
-        choice = input("Enter your choice: ")
+        # Collect all matching records
+        all_records = []
+        for record_id, oram_id in results:
+            encrypted_data = self.path_oram.access(oram_id, op='read', a=record_id)
+            if encrypted_data is not None:  # Only process if data is found
+                decrypted_data = self.encryption.decrypt_data(encrypted_data)
+                all_records.append(decrypted_data)
 
-        if choice == "1":
-            data = input("Enter the data to encrypt: ")
-            field = input("Enter the field for querying: ")
-            insert_record(conn, path_oram, encryption, data, field, alpha)
-        elif choice == "2":
-            record_id = input("Enter the record ID: ")
-            try:
-                record_id = int(record_id)
-                record = retrieve_record(conn, path_oram, encryption, record_id)
-                if record:
-                    print(f"Record {record_id}: {record}")
-                else:
-                    print(f"No record found with ID {record_id}")
-            except ValueError:
-                print("Invalid record ID. Please enter a number.")
-        elif choice == "3":
-            field = input("Enter the field to query: ")
-            query_by_field(conn, path_oram, encryption, field, alpha, x)
-        elif choice == "4":
-            print("Exiting...")
-            break
+        # Pad the total number of results
+        padded_records = self.pad_results(all_records)
+        print(f"Query results for '{field_name} = {field_value}': {padded_records}")
+
+        # Return the padded results
+        return padded_records
+
+    def pad_results(self, results):
+        """Pad the results to the next power-of-x."""
+        current_length = len(results)
+        if current_length == 0:
+            return ['dummy'] * self.x  # Handle empty results
+
+        # Find the next power of x
+        target_length = 1
+        while target_length < current_length:
+            target_length *= self.x
+
+        # Pad only if the current length is not already a power of x
+        if target_length > current_length:
+            return results + ['dummy'] * (target_length - current_length)
         else:
-            print("Invalid choice. Please try again.")
-
-def test_seal_program():
-    # Initialize the database, Path ORAM, and encryption
-    conn = init_db()
-    N = 10  # Maximum number of blocks per ORAM
-    Z = 4   # Bucket capacity
-    alpha = 2  # Number of bits of leakage (2^alpha ORAMs)
-    num_orams = 2 ** alpha  # Number of ORAMs
-    path_oram = init_path_oram(N=N, Z=Z, num_orams=num_orams)
-    encryption = EncryptionUtils()
-    x = 2  # Padding factor
-
-    # Test data
-    test_data = [
-        ("data1", "field1"),
-        ("data2", "field2"),
-        ("data3", "field1"),
-    ]
-
-    # Insert records
-    print("Inserting records...")
-    for data, field in test_data:
-        insert_record(conn, path_oram, encryption, data, field, alpha)
-
-    # Retrieve records by ID
-    print("\nRetrieving records by ID...")
-    for record_id in range(1, len(test_data) + 1):
-        record = retrieve_record(conn, path_oram, encryption, record_id)
-        print(f"Record {record_id}: {record}")
-
-    # Query records by field
-    print("\nQuerying records by field...")
-    query_by_field(conn, path_oram, encryption, "field1", alpha, x)
-
-    # Close the database connection
-    conn.close()
-
-if __name__ == "__main__":
-    test_seal_program()
+            return results  # No padding needed

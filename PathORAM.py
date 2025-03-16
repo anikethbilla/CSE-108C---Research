@@ -33,9 +33,11 @@ class PathORAM:
         """
         oram = self.orams[oram_id]
         if a not in oram['position_map']:
+            # Assign a random leaf for the block if it doesn't exist
             oram['position_map'][a] = random.randint(0, 2 ** (self.N - 1).bit_length() - 1)
         
         x = oram['position_map'][a]
+        # Update the position map to a new random leaf
         oram['position_map'][a] = random.randint(0, 2 ** (self.N - 1).bit_length() - 1)
         path = self.get_path(x)
 
@@ -54,7 +56,8 @@ class PathORAM:
             if block:
                 return block[2]  # Return data for read operation
             else:
-                return None  # Block not found in stash
+                # If the block is not found, return None
+                return None
 
         # Write back blocks to the tree
         for node in reversed(path):
