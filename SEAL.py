@@ -31,6 +31,12 @@ def deterministic_encrypt(data, key):
     cipher = AES.new(h.digest()[:16], AES.MODE_ECB)
     return cipher.encrypt(pad(data.encode('utf-8'), AES.block_size))
 
+def compute_oram_id(record_id, num_orams):
+    """Compute the ORAM ID for a given record ID using a PRP."""
+    h = SHA256.new(str(record_id).encode('utf-8'))
+    oram_id = int.from_bytes(h.digest(), byteorder='big') % num_orams
+    return oram_id
+
 def insert_record(conn, path_oram, encryption, data, field, alpha):
     """Insert a record into the database and Path ORAM."""
     encrypted_data = encryption.encrypt_data(data)  # Encrypt data
@@ -41,8 +47,9 @@ def insert_record(conn, path_oram, encryption, data, field, alpha):
     cursor.execute('SELECT COUNT(*) FROM records')
     record_id = cursor.fetchone()[0] + 1  # Simulate auto-increment
 
-    # Compute ORAM ID
-    oram_id = record_id % (2 ** alpha)  # Distribute records across ORAMs
+    # Compute ORAM ID using a PRP
+    num_orams = 2 ** alpha
+    oram_id = compute_oram_id(record_id, num_orams)
 
     # Insert the record into Path ORAM
     path_oram.access(oram_id, op='write', a=record_id, data=encrypted_data)

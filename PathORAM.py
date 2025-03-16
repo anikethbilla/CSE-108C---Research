@@ -39,10 +39,12 @@ class PathORAM:
         oram['position_map'][a] = random.randint(0, 2 ** (self.N - 1).bit_length() - 1)
         path = self.get_path(x)
 
+        # Read and clear the path
         for node in path:
             oram['stash'].extend(oram['tree'][node])
             oram['tree'][node] = []
 
+        # Handle the operation
         block = next((b for b in oram['stash'] if b[0] == a), None)
         if op == 'write':
             if block:
@@ -50,14 +52,17 @@ class PathORAM:
             oram['stash'].append((a, oram['position_map'][a], data))
         elif op == 'read':
             if block:
-                return block[2]
+                return block[2]  # Return data for read operation
+            else:
+                return None  # Block not found in stash
 
+        # Write back blocks to the tree
         for node in reversed(path):
             bucket_blocks = [b for b in oram['stash'] if self.get_path(b[1])[-1] == node]
             oram['stash'] = [b for b in oram['stash'] if b not in bucket_blocks]
             oram['tree'][node] = bucket_blocks[:self.Z]
 
-        return None if op == 'write' else block[2]
+        return None  # For write operations
 
     def get_path(self, leaf):
         """Get the path from the root to the specified leaf."""
