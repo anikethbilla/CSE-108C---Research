@@ -80,24 +80,32 @@ def query_by_field(conn, path_oram, encryption, field, alpha, x):
     cursor.execute('SELECT id, oram_id FROM records WHERE encrypted_field = ?', (encrypted_field,))
     results = cursor.fetchall()
 
-    # Group records by ORAM ID
-    oram_results = {}
+    # Collect all matching records
+    all_records = []
     for record_id, oram_id in results:
-        if oram_id not in oram_results:
-            oram_results[oram_id] = []
         encrypted_data = path_oram.access(oram_id, op='read', a=record_id)
-        oram_results[oram_id].append(encryption.decrypt_data(encrypted_data))
+        all_records.append(encryption.decrypt_data(encrypted_data))
 
-    # Simulate accessing the appropriate ORAM and pad results
-    print(f"Query results for '{field}':")
-    for oram_id, records in oram_results.items():
-        padded_records = pad_results(records, x)
-        print(f"ORAM {oram_id}: {padded_records}")
+    # Pad the total number of results
+    padded_records = pad_results(all_records, x)
+    print(f"Query results for '{field}': {padded_records}")
 
 def pad_results(results, x):
     """Pad the results to the next power-of-x."""
-    target_length = x ** (len(results).bit_length())
-    return results + ['dummy'] * (target_length - len(results))
+    current_length = len(results)
+    if current_length == 0:
+        return ['dummy'] * x  # Handle empty results
+
+    # Find the next power of x
+    target_length = 1
+    while target_length < current_length:
+        target_length *= x
+
+    # Pad only if the current length is not already a power of x
+    if target_length > current_length:
+        return results + ['dummy'] * (target_length - current_length)
+    else:
+        return results  # No padding needed
 
 def interactive_cli(conn, path_oram, encryption, alpha, x):
     """Interactive command-line interface for the SEAL program."""
