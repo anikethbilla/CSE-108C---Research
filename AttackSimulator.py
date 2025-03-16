@@ -6,12 +6,8 @@ class AttackSimulator:
         """
         self.seal_system = seal_system
 
-    def access_pattern_attack(self, dataset):
+    def access_pattern_attack(self):
         """Simulate an access pattern leakage attack."""
-        # Insert data into the system
-        for record in dataset:
-            self.seal_system.insert_record(record)
-
         # Perform queries and log access patterns
         queries = ["RACE = BLACK", "CHARGE 1 DESCRIPTION = DRIVING ON SUSPENDED LICENSE"]
         access_patterns = {}
@@ -27,12 +23,8 @@ class AttackSimulator:
         success_rate = self.analyze_access_patterns(access_patterns)
         print(f"Success Rate of Access Pattern Attack: {success_rate}%")
 
-    def query_result_attack(self, dataset):
+    def query_result_attack(self):
         """Simulate a query result leakage attack."""
-        # Insert data into the system
-        for record in dataset:
-            self.seal_system.insert_record(record)
-
         # Perform queries and log result sizes
         queries = ["RACE = BLACK", "CHARGE 1 DESCRIPTION = DRIVING ON SUSPENDED LICENSE"]
         result_sizes = {}

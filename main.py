@@ -45,10 +45,10 @@ def main():
     # Simulate attacks using the dataset
     attack_simulator = AttackSimulator(seal_system)
     print("\nSimulating access pattern attack:")
-    attack_simulator.access_pattern_attack(dataset)
+    attack_simulator.access_pattern_attack()
 
     print("\nSimulating query result attack:")
-    attack_simulator.query_result_attack(dataset)
+    attack_simulator.query_result_attack()
 
 if __name__ == "__main__":
     main()
