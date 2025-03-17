@@ -1,3 +1,4 @@
+import os
 import sqlite3
 from Crypto.Hash import SHA256
 from Crypto.Cipher import AES
@@ -25,6 +26,11 @@ class SEAL:
         self.encryption = EncryptionUtils()
 
     def init_db(self):
+        db_file = 'encrypted_db.sqlite'
+        if os.path.exists(db_file):
+            os.remove(db_file)
+            print(f"Deleted existing database file: {db_file}")
+        
         """Initialize the SQLite database."""
         conn = sqlite3.connect('encrypted_db.sqlite')
         cursor = conn.cursor()
@@ -77,10 +83,13 @@ class SEAL:
         # Encrypt each field
         encrypted_fields = {}
         for field, value in record.items():
+            # Convert value to string if it's not already
+            if not isinstance(value, str):
+                value = str(value)
             encrypted_fields[field] = self.deterministic_encrypt(value)
 
         # Encrypt the data (combine all fields into a single string)
-        data = ",".join(record.values())
+        data = ",".join(str(value) for value in record.values())
         encrypted_data = self.encryption.encrypt_data(data)
 
         cursor = self.conn.cursor()
