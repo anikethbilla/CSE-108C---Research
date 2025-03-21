@@ -74,7 +74,7 @@ class SEAL:
         return cipher.encrypt(pad(data.encode('utf-8'), AES.block_size))
 
     def compute_oram_id(self, record_id):
-        """Compute the ORAM ID for a given record ID using a PRF."""
+        """Compute the ORAM ID for a given record ID using a PRP."""
         h = SHA256.new(str(record_id).encode('utf-8'))
         return int.from_bytes(h.digest(), byteorder='big') % self.num_orams
 
