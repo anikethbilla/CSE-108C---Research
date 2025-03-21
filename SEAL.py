@@ -97,7 +97,7 @@ class SEAL:
         cursor.execute('SELECT COUNT(*) FROM records')
         record_id = cursor.fetchone()[0] + 1  # Simulate auto-increment
 
-        # Compute ORAM ID using a PRF
+        # Compute ORAM ID using a PRP
         oram_id = self.compute_oram_id(record_id)
 
         # Insert the record into the appropriate Path ORAM
@@ -147,7 +147,7 @@ class SEAL:
 
     def retrieve_record(self, record_id):
         """Retrieve and decrypt a record by ID."""
-        # Compute ORAM ID using a PRF
+        # Compute ORAM ID using a PRP
         oram_id = self.compute_oram_id(record_id)
 
         # Retrieve the record from the appropriate Path ORAM
