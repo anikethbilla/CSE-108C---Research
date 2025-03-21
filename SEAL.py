@@ -1,9 +1,9 @@
 import os
 import sqlite3
+import random
 from Crypto.Hash import SHA256
 from Crypto.Cipher import AES
 from Crypto.Util.Padding import pad, unpad
-from Crypto.Random import get_random_bytes
 from PathORAM import PathORAM
 from EncryptionUtils import EncryptionUtils
 
@@ -21,18 +21,18 @@ class SEAL:
         self.alpha = alpha
         self.x = x
         self.num_orams = 2 ** alpha
-        self.conn = self.init_db()
-        self.path_oram = PathORAM(N=N, Z=Z, num_orams=self.num_orams)
+        self.orams = [PathORAM(N=N, Z=Z) for _ in range(self.num_orams)]  # Create multiple PathORAM objects
         self.encryption = EncryptionUtils()
+        self.conn = self.init_db()
 
     def init_db(self):
+        """Initialize the SQLite database."""
         db_file = 'encrypted_db.sqlite'
         if os.path.exists(db_file):
             os.remove(db_file)
             print(f"Deleted existing database file: {db_file}")
-        
-        """Initialize the SQLite database."""
-        conn = sqlite3.connect('encrypted_db.sqlite')
+
+        conn = sqlite3.connect(db_file)
         cursor = conn.cursor()
         cursor.execute("""
         CREATE TABLE IF NOT EXISTS records (
@@ -74,16 +74,15 @@ class SEAL:
         return cipher.encrypt(pad(data.encode('utf-8'), AES.block_size))
 
     def compute_oram_id(self, record_id):
-        """Compute the ORAM ID for a given record ID using a PRF."""
+        """Compute the ORAM ID for a given record ID using a PRP."""
         h = SHA256.new(str(record_id).encode('utf-8'))
         return int.from_bytes(h.digest(), byteorder='big') % self.num_orams
 
     def insert_record(self, record):
-        """Insert a record into the database and Path ORAM."""
+        """Insert a record into the database and the appropriate Path ORAM."""
         # Encrypt each field
         encrypted_fields = {}
         for field, value in record.items():
-            # Convert value to string if it's not already
             if not isinstance(value, str):
                 value = str(value)
             encrypted_fields[field] = self.deterministic_encrypt(value)
@@ -101,8 +100,8 @@ class SEAL:
         # Compute ORAM ID using a PRP
         oram_id = self.compute_oram_id(record_id)
 
-        # Insert the record into Path ORAM
-        self.path_oram.access(oram_id, op='write', a=record_id, data=encrypted_data)
+        # Insert the record into the appropriate Path ORAM
+        self.orams[oram_id].access(op='write', a=record_id, data=encrypted_data)
 
         # Insert metadata into SQLite database
         cursor.execute('''
@@ -141,19 +140,19 @@ class SEAL:
             encrypted_fields.get("CHARGES DESCRIPTION", ""),
             encrypted_fields.get("CHARGES TYPE", ""),
             encrypted_fields.get("CHARGES CLASS", ""),
-            oram_id  # Add oram_id here
+            oram_id
         ))
         self.conn.commit()
         print(f"Record inserted with ID: {record_id} (ORAM {oram_id})")
 
     def retrieve_record(self, record_id):
         """Retrieve and decrypt a record by ID."""
-        cursor = self.conn.cursor()
-        cursor.execute('SELECT oram_id FROM records WHERE id = ?', (record_id,))
-        result = cursor.fetchone()
-        if result:
-            oram_id = result[0]
-            encrypted_data = self.path_oram.access(oram_id, op='read', a=record_id)
+        # Compute ORAM ID using a PRP
+        oram_id = self.compute_oram_id(record_id)
+
+        # Retrieve the record from the appropriate Path ORAM
+        encrypted_data = self.orams[oram_id].access(op='read', a=record_id)
+        if encrypted_data is not None:
             decrypted_data = self.encryption.decrypt_data(encrypted_data)
             # Split the decrypted data into individual fields
             fields = decrypted_data.split(',')
@@ -232,7 +231,7 @@ class SEAL:
         # Collect all matching records
         all_records = []
         for record_id, oram_id in results:
-            encrypted_data = self.path_oram.access(oram_id, op='read', a=record_id)
+            encrypted_data = self.orams[oram_id].access(op='read', a=record_id)
             if encrypted_data is not None:  # Only process if data is found
                 decrypted_data = self.encryption.decrypt_data(encrypted_data)
                 all_records.append(decrypted_data)

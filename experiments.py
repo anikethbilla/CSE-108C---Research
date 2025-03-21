@@ -138,10 +138,10 @@ if __name__ == "__main__":
     file_path = "Arrests_20250316.csv"  # Replace with the path to your CSV file
 
     print("Running Experiment 1: Varying Alpha")
-    #experiment_1(file_path)
+    experiment_1(file_path)
 
     print("\nRunning Experiment 2: Adjustable Padding")
-    #experiment_2(file_path)
+    experiment_2(file_path)
 
     print("\nRunning Experiment 3: Attack 1 (Volumetric Leakage)")
     experiment_3(file_path)
