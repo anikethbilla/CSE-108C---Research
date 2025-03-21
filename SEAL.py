@@ -74,7 +74,7 @@ class SEAL:
         return cipher.encrypt(pad(data.encode('utf-8'), AES.block_size))
 
     def compute_oram_id(self, record_id):
-        """Compute the ORAM ID for a given record ID using a PRP."""
+        """Compute the ORAM ID for a given record ID using a PRF."""
         h = SHA256.new(str(record_id).encode('utf-8'))
         return int.from_bytes(h.digest(), byteorder='big') % self.num_orams
 
@@ -97,7 +97,7 @@ class SEAL:
         cursor.execute('SELECT COUNT(*) FROM records')
         record_id = cursor.fetchone()[0] + 1  # Simulate auto-increment
 
-        # Compute ORAM ID using a PRP
+        # Compute ORAM ID using a PRF
         oram_id = self.compute_oram_id(record_id)
 
         # Insert the record into the appropriate Path ORAM
@@ -147,7 +147,7 @@ class SEAL:
 
     def retrieve_record(self, record_id):
         """Retrieve and decrypt a record by ID."""
-        # Compute ORAM ID using a PRP
+        # Compute ORAM ID using a PRF
         oram_id = self.compute_oram_id(record_id)
 
         # Retrieve the record from the appropriate Path ORAM
