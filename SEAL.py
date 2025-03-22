@@ -67,7 +67,7 @@ class SEAL:
         conn.commit()
         return conn
 
-    def deterministic_encrypt(self, data):
+    def deterministic_token(self, data):
         """Encrypt data deterministically for queryable fields."""
         h = SHA256.new(data.encode('utf-8'))
         cipher = AES.new(h.digest()[:16], AES.MODE_ECB)
@@ -85,7 +85,11 @@ class SEAL:
         for field, value in record.items():
             if not isinstance(value, str):
                 value = str(value)
-            encrypted_fields[field] = self.deterministic_encrypt(value)
+
+            if field == "RACE":
+                encrypted_fields[field] = self.deterministic_token(value)
+            else:
+                encrypted_fields[field] = self.encryption.encrypt_data(value)
 
         # Encrypt the data (combine all fields into a single string)
         data = ",".join(str(value) for value in record.values())
@@ -187,7 +191,7 @@ class SEAL:
     def query_by_field(self, field_name, field_value):
         """Query records by a specific field and return padded results."""
         # Encrypt the field value
-        encrypted_field_value = self.deterministic_encrypt(field_value)
+        encrypted_field_value = self.deterministic_token(field_value)
 
         # Map the field name to the corresponding database column
         field_to_column = {
